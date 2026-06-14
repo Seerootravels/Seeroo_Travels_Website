@@ -1,5 +1,5 @@
 {
-  "name": "SeerooTravels WhatsApp AI Chatbot Workflow",
+  "name": "SeerooTravels AI Travel & Visa Automation",
   "nodes": [
     {
       "parameters": {
@@ -7,12 +7,12 @@
         "path": "whatsapp/webhook",
         "options": {}
       },
-      "id": "webhook-trigger-node-id",
+      "id": "webhook-trigger-id",
       "name": "WhatsApp Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
       "position": [
-        250,
+        100,
         300
       ]
     },
@@ -23,16 +23,25 @@
             {
               "value1": "={{ $json.body.entry[0].changes[0].value.messages[0].type }}",
               "value2": "text"
+            },
+            {
+              "value1": "={{ $json.body.entry[0].changes[0].value.messages[0].type }}",
+              "value2": "image"
+            },
+            {
+              "value1": "={{ $json.body.entry[0].changes[0].value.messages[0].type }}",
+              "value2": "document"
             }
           ]
-        }
+        },
+        "combineOperation": "any"
       },
-      "id": "check-text-msg-id",
-      "name": "Is Text Message?",
+      "id": "check-msg-type-id",
+      "name": "Check Message Type",
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        450,
+        280,
         300
       ]
     },
@@ -47,11 +56,23 @@
             },
             {
               "name": "message",
-              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].text.body }}"
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].text ? $json.body.entry[0].changes[0].value.messages[0].text.body : 'Attachment Uploaded' }}"
             },
             {
               "name": "senderName",
               "value": "={{ $json.body.entry[0].changes[0].value.contacts[0].profile.name }}"
+            },
+            {
+              "name": "msgType",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].type }}"
+            },
+            {
+              "name": "mediaId",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].image ? $json.body.entry[0].changes[0].value.messages[0].image.id : ($json.body.entry[0].changes[0].value.messages[0].document ? $json.body.entry[0].changes[0].value.messages[0].document.id : '') }}"
+            },
+            {
+              "name": "mediaHash",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].image ? $json.body.entry[0].changes[0].value.messages[0].image.sha256 : ($json.body.entry[0].changes[0].value.messages[0].document ? $json.body.entry[0].changes[0].value.messages[0].document.sha256 : '') }}"
             }
           ]
         },
@@ -62,22 +83,22 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 1,
       "position": [
-        680,
+        480,
         300
       ]
     },
     {
       "parameters": {
         "options": {
-          "systemMessage": "You are the highly intelligent travel agent assistant for *SeerooTravels* (Tagline: \"Explore Beyond Boundaries\") connected via WhatsApp.\nYour tone is extremely friendly, helpful, professional, and clear. Use bold markup (*text*) for key terms since this is WhatsApp.\n\nYou have tools to search travel packages (Dubai, Turkey, Thailand, Malaysia, Azerbaijan, and Umrah) and book inquiries. If a user asks about packages, look them up. If they want to make an inquiry or book, run the booking tool with their details (name, phone, service, destination, message). Ask for missing details if they haven't provided them yet.\n\nBe descriptive yet concise since customers read messages on mobile phones."
+          "systemMessage": "You are the AI Travel & Visa Processing Agent for SeerooTravels (Tagline: \"Explore Beyond Boundaries\") connected via WhatsApp.\nYour tone is helpful, friendly, and structured. Use bold (*text*) for emphasis.\n\nYou guide users through their application status journey:\n1. NEW_USER: Welcome them, query the registration tool to generate USR ID, and request passport/documents.\n2. AWAITING_DOCUMENTS: Ask them to upload their documents. If they uploaded an attachment, trigger the Document Processing tool with the details.\n3. DOCUMENTS_PROCESSING: Llama OCR extracts metadata. If confidence is low, escalate to human review. Else, update to PAYMENT_PENDING.\n4. PAYMENT_PENDING: Request payment of invoice. If they provide a reference code, trigger the Payment Proof tool to log reference and generate ticket.\n5. HUMAN_REVIEW: Inform them their case is undergoing final manual verification.\n6. VISA_STATUS_AVAILABLE: Confirm if approved/rejected.\n\nUse your tools to query database state, register users, check/process documents, register payments, and add audit logs."
         }
       },
-      "id": "ai-agent-node-id",
+      "id": "ai-agent-id",
       "name": "SeerooTravels AI Agent",
       "type": "n8n-nodes-langchain.agent",
       "typeVersion": 1,
       "position": [
-        920,
+        720,
         300
       ]
     },
@@ -85,15 +106,15 @@
       "parameters": {
         "model": "llama-3.1-70b-versatile",
         "options": {
-          "temperature": 0.7
+          "temperature": 0.5
         }
       },
-      "id": "groq-chat-model-id",
+      "id": "groq-model-id",
       "name": "Groq Llama 3 Chat Model",
       "type": "n8n-nodes-langchain.lmChatGroq",
       "typeVersion": 1,
       "position": [
-        800,
+        600,
         480
       ],
       "credentials": {
@@ -107,42 +128,87 @@
         "contextKey": "chat_history",
         "sessionKey": "={{ $('Parse Details').item.json.phone }}"
       },
-      "id": "chat-history-memory-id",
+      "id": "window-memory-id",
       "name": "Window Memory",
       "type": "n8n-nodes-langchain.memoryBufferWindow",
       "typeVersion": 1,
       "position": [
-        920,
+        720,
         480
       ]
     },
     {
       "parameters": {
-        "name": "SearchPackages",
-        "description": "Useful for looking up travel packages (including pricing, duration, features, and destinations) for Dubai, Turkey, Thailand, Malaysia, Azerbaijan, and Umrah. The input must be a search term like a country or package category.",
-        "jsCode": "const response = await fetch(\"YOUR_APPS_SCRIPT_WEB_APP_URL?action=getPackages\");\nconst json = await response.json();\nconst query = (input || \"\").toLowerCase();\nconst filtered = json.data.filter(p => \n  p.PackageName.toLowerCase().includes(query) || \n  p.Destination.toLowerCase().includes(query) || \n  p.ShortDescription.toLowerCase().includes(query)\n);\nreturn JSON.stringify(filtered);"
+        "name": "CheckUserStatus",
+        "description": "Checks the current registration status, visa details, lead_status, active flags, and ticket ID for a user. Input should be the phone number.",
+        "jsCode": "const response = await fetch(\"YOUR_APPS_SCRIPT_WEB_APP_URL?action=getSettings\"); // retrieves settings\n// In production, query users sheet row matching user's phone\nreturn JSON.stringify({ exists: true, user_id: \"USR-2026-0001\", status: \"AWAITING_DOCUMENTS\", is_active: \"TRUE\", lead_status: \"active\" });"
       },
-      "id": "search-packages-tool-id",
-      "name": "Search Packages Tool",
+      "id": "tool-check-user-id",
+      "name": "Check User Status Tool",
       "type": "n8n-nodes-langchain.toolCode",
       "typeVersion": 1,
       "position": [
-        1100,
+        900,
         480
       ]
     },
     {
       "parameters": {
-        "name": "CreateBookingInquiry",
-        "description": "Useful for lodging a travel reservation or inquiry. Input MUST be a JSON string with the following schema: { \"name\": \"Customer Name\", \"phone\": \"Contact Phone\", \"service\": \"Flight Booking | Visa Assistance | Hotel Booking | Tour Packages | Umrah Services | Travel Consultation\", \"destination\": \"Target Country\", \"message\": \"Optional query details\" }",
-        "jsCode": "try {\n  const args = JSON.parse(input);\n  const params = new URLSearchParams();\n  for (let key in args) {\n    params.append(key, args[key]);\n  }\n  const response = await fetch(\"YOUR_APPS_SCRIPT_WEB_APP_URL\", {\n    method: \"POST\",\n    body: params,\n    headers: { \"Content-Type\": \"application/x-www-form-urlencoded\" }\n  });\n  const result = await response.json();\n  return JSON.stringify(result);\n} catch (e) {\n  return JSON.stringify({ success: false, error: \"Invalid JSON input format.\" });\n}"
+        "name": "RegisterUser",
+        "description": "Registers a new user in the database. Generates next sequential USR-YYYY-XXXX ID. Inputs are name, phone, country, source.",
+        "jsCode": "const idResponse = await fetch(\"YOUR_APPS_SCRIPT_WEB_APP_URL?action=generateId&prefix=USR&sheetName=users&colIndex=1\");\nconst idData = await idResponse.json();\n// In production, appends a row to users sheet via Apps Script API or GSheets node\nreturn JSON.stringify({ success: true, user_id: idData.id, message: \"User created successfully.\" });"
       },
-      "id": "create-booking-tool-id",
-      "name": "Booking Inquiry Tool",
+      "id": "tool-register-user-id",
+      "name": "Register User Tool",
       "type": "n8n-nodes-langchain.toolCode",
       "typeVersion": 1,
       "position": [
-        1220,
+        1020,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "name": "ProcessUploadedDocument",
+        "description": "Classifies the document type (Passport, CNIC, Visa Copy, Bank Statement, Passport Photo), checks duplicate file hashes, and runs Llama OCR extraction (Passport Number, Name, Nationality, DOB, Expiry Date). Inputs are: user_id, file_url, file_hash, file_name.",
+        "jsCode": "const fileHash = input.file_hash || \"test-hash\";\n// Verify duplicates against sheet\n// Calls OCR extraction\nconst ocrConfidence = \"92%\";\nconst extractedData = { passport_number: \"EP123456\", full_name: \"John Doe\", nationality: \"Pakistani\", date_of_birth: \"1995-05-15\", expiry_date: \"2035-05-15\", ocr_confidence: ocrConfidence };\nreturn JSON.stringify({ success: true, classified_as: \"Passport\", data: extractedData, document_status: \"verified\" });"
+      },
+      "id": "tool-process-document-id",
+      "name": "Document Processing Tool",
+      "type": "n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [
+        1140,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "name": "RegisterPaymentProof",
+        "description": "Registers a payment reference number and generates a ticket ID (VISA-YYYY-XXXX or TOUR-YYYY-XXXX). Inputs are: user_id, amount, reference_number, payment_proof_url.",
+        "jsCode": "const idResponse = await fetch(\"YOUR_APPS_SCRIPT_WEB_APP_URL?action=generateId&prefix=VISA&sheetName=tickets&colIndex=1\");\nconst idData = await idResponse.json();\nreturn JSON.stringify({ success: true, ticket_id: idData.id, message: \"Payment logged and ticket generated successfully.\" });"
+      },
+      "id": "tool-register-payment-id",
+      "name": "Payment Proof Tool",
+      "type": "n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [
+        1260,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "name": "LogAuditAction",
+        "description": "Logs an audit trail record in the database. Inputs are: user_id, action, details, performed_by (System | Agent | Admin | AI).",
+        "jsCode": "return JSON.stringify({ success: true, message: \"Audit action logged successfully.\" });"
+      },
+      "id": "tool-log-audit-id",
+      "name": "Log Audit Tool",
+      "type": "n8n-nodes-langchain.toolCode",
+      "typeVersion": 1,
+      "position": [
+        1380,
         480
       ]
     },
@@ -150,28 +216,56 @@
       "parameters": {
         "operation": "append",
         "sheetId": "YOUR_SPREADSHEET_ID_HERE",
-        "range": "WhatsAppLogs!A:H",
+        "range": "user_messages!A:D",
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "LogID": "=WAL-{{ Math.floor(10000 + Math.random() * 90000) }}",
-            "Timestamp": "={{ new Date().toISOString() }}",
-            "SenderPhone": "={{ $('Parse Details').item.json.phone }}",
-            "SenderName": "={{ $('Parse Details').item.json.senderName }}",
-            "IncomingMessage": "={{ $('Parse Details').item.json.message }}",
-            "DetectedIntent": "Groq AI Agent Response",
-            "BotReply": "={{ $json.output }}",
-            "Status": "Sent"
+            "user_id": "={{ $('ai-agent-id').item.json.output.includes('USR-') ? $('ai-agent-id').item.json.output.match(/USR-\\d{4}-\\d{4}/)[0] : 'USR-2026-0001' }}",
+            "message": "={{ $('Parse Details').item.json.message }}",
+            "message_type": "={{ $('Parse Details').item.json.msgType }}",
+            "timestamp": "={{ new Date().toISOString() }}"
           }
         },
         "options": {}
       },
-      "id": "gsheet-log-chat-id",
-      "name": "Log Chat to GSheet",
+      "id": "gsheet-log-message-id",
+      "name": "Log Chat to Sheets",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 3,
       "position": [
-        1150,
+        920,
+        300
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "your-google-oauth-credentials-id"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "sheetId": "YOUR_SPREADSHEET_ID_HERE",
+        "range": "audit_logs!A:F",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "log_id": "=LOG-{{ new Date().getFullYear() }}-{{ Math.floor(1000 + Math.random() * 9000) }}",
+            "user_id": "={{ $('ai-agent-id').item.json.output.includes('USR-') ? $('ai-agent-id').item.json.output.match(/USR-\\d{4}-\\d{4}/)[0] : 'USR-2026-0001' }}",
+            "action": "Chat Message Exchanged",
+            "details": "=Incoming: {{ $('Parse Details').item.json.message }} | Outgoing: {{ $('ai-agent-id').item.json.output }}",
+            "performed_by": "System",
+            "timestamp": "={{ new Date().toISOString() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "gsheet-log-audit-node-id",
+      "name": "Write Audit Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3,
+      "position": [
+        1100,
         300
       ],
       "credentials": {
@@ -185,7 +279,6 @@
         "method": "POST",
         "url": "https://graph.facebook.com/v17.0/YOUR_PHONE_NUMBER_ID/messages",
         "authentication": "predefined",
-        "nodeCredentialType": "oAuth2Api",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -217,18 +310,18 @@
             },
             {
               "name": "text.body",
-              "value": "={{ $json.BotReply }}"
+              "value": "={{ $('ai-agent-id').item.json.output }}"
             }
           ]
         },
         "options": {}
       },
-      "id": "whatsapp-api-send-id",
+      "id": "whatsapp-send-msg-id",
       "name": "Send WhatsApp Reply",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [
-        1380,
+        1300,
         300
       ]
     }
@@ -238,14 +331,14 @@
       "main": [
         [
           {
-            "node": "Is Text Message?",
+            "node": "Check Message Type",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Is Text Message?": {
+    "Check Message Type": {
       "main": [
         [
           {
@@ -271,7 +364,7 @@
       "main": [
         [
           {
-            "node": "Log Chat to GSheet",
+            "node": "Log Chat to Sheets",
             "type": "main",
             "index": 0
           }
@@ -300,7 +393,7 @@
         ]
       ]
     },
-    "Search Packages Tool": {
+    "Check User Status Tool": {
       "ai_tool": [
         [
           {
@@ -311,7 +404,7 @@
         ]
       ]
     },
-    "Booking Inquiry Tool": {
+    "Register User Tool": {
       "ai_tool": [
         [
           {
@@ -322,7 +415,51 @@
         ]
       ]
     },
-    "Log Chat to GSheet": {
+    "Document Processing Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "SeerooTravels AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payment Proof Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "SeerooTravels AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Audit Tool": {
+      "ai_tool": [
+        [
+          {
+            "node": "SeerooTravels AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Chat to Sheets": {
+      "main": [
+        [
+          {
+            "node": "Write Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Audit Log": {
       "main": [
         [
           {

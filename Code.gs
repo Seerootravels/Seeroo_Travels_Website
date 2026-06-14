@@ -1,7 +1,58 @@
 /**
  * SeerooTravels Web Application Backend
+ * AI Travel & Visa Processing Automation System
  * Built with Google Apps Script & Google Sheets
  */
+
+// Global Sheet configurations (11 new automation sheets + 5 old packages sheets)
+function getSheetsConfig() {
+  return {
+    // New Automation Sheets
+    "users": [
+      "user_id", "name", "phone", "status", "visa_type", "payment_status", 
+      "created_at", "updated_at", "ticket_id", "country", "assigned_agent", 
+      "last_activity", "source", "is_active", "lead_status"
+    ],
+    "user_messages": [
+      "user_id", "message", "message_type", "timestamp"
+    ],
+    "user_documents": [
+      "user_id", "document_type", "file_url", "file_hash", "document_status", "uploaded_at"
+    ],
+    "extracted_data": [
+      "user_id", "passport_number", "full_name", "nationality", "date_of_birth", "expiry_date", "ocr_confidence", "extraction_status"
+    ],
+    "processing_queue": [
+      "queue_id", "user_id", "document_id", "status", "retry_count", "created_at", "updated_at"
+    ],
+    "payments": [
+      "payment_id", "user_id", "amount", "method", "status", "created_at", "reference_number", "payment_proof_url", "verified_by", "verified_at"
+    ],
+    "tickets": [
+      "ticket_id", "user_id", "type", "status", "created_at", "updated_at", "remarks"
+    ],
+    "human_review": [
+      "review_id", "user_id", "reason", "assigned_to", "status", "created_at", "updated_at"
+    ],
+    "failed_documents": [
+      "user_id", "document_id", "file_url", "reason", "retry_count", "created_at"
+    ],
+    "audit_logs": [
+      "log_id", "user_id", "action", "details", "performed_by", "timestamp"
+    ],
+    "settings": [
+      "key", "value", "description", "updated_at"
+    ],
+    
+    // Existing Front-End Compatible Sheets (Backward Compatibility)
+    "Packages": ["PackageID", "Category", "PackageName", "Destination", "Duration", "Price", "Currency", "Thumbnail", "ShortDescription", "LongDescription", "Featured", "Status"],
+    "Inquiries": ["InquiryID", "Date", "Name", "Phone", "Email", "Service", "Destination", "TravelDate", "Adults", "Children", "Message", "Status"],
+    "Testimonials": ["ReviewID", "CustomerName", "Country", "Rating", "Review", "ImageURL"],
+    "Blogs": ["BlogID", "Title", "Author", "Date", "Category", "Summary", "Content", "ImageURL", "ReadTime"],
+    "Settings": ["SettingKey", "SettingValue"],
+    "WhatsAppLogs": ["LogID", "Timestamp", "SenderPhone", "SenderName", "IncomingMessage", "DetectedIntent", "BotReply", "Status"]
+  };
+}
 
 // Helper to open or initialize the database spreadsheet
 function getDatabase() {
@@ -43,11 +94,28 @@ function getDatabase() {
   return ss;
 }
 
-// System initialization
+// System initialization workflow
 function initializeSystem() {
-  var ss = getDatabase();
-  resetDemoData();
-  return ss.getUrl();
+  try {
+    var ss = getDatabase();
+    
+    // 1. Initial creation
+    setupDatabase(ss);
+    
+    // 2. Audit and upgrade headers
+    upgradeDatabaseSchema(ss);
+    
+    // 3. Schema validation logging
+    validateDatabaseSchema(ss);
+    
+    // 4. Seed default website parameters & parameters configs
+    seedDatabaseData(ss);
+    
+    return ss.getUrl();
+  } catch(e) {
+    console.error("initializeSystem failed: " + e.toString());
+    throw e;
+  }
 }
 
 // Menu creation for Google Sheets UI
@@ -56,22 +124,28 @@ function onOpen() {
   ui.createMenu('SeerooTravels Admin')
     .addItem('Setup Database', 'setupDatabaseMenu')
     .addItem('Reset Demo Data', 'resetDemoDataMenu')
+    .addItem('Backup Database Now', 'triggerBackupMenu')
     .addItem('Open Spreadsheet Link', 'openSpreadsheetMenu')
     .addToUi();
 }
 
 function setupDatabaseMenu() {
-  getDatabase();
-  SpreadsheetApp.getUi().alert('Database initialized and sheets created successfully!');
+  initializeSystem();
+  SpreadsheetApp.getUi().alert('Database initialized and schema validated successfully!');
 }
 
 function resetDemoDataMenu() {
   var ui = SpreadsheetApp.getUi();
-  var response = ui.alert('Reset Demo Data', 'Are you sure you want to reset all packages, blogs, testimonials, and settings to defaults? This will overwrite existing records (excluding Inquiries).', ui.ButtonSet.YES_NO);
+  var response = ui.alert('Reset Demo Data', 'Are you sure you want to reset all packages, blogs, testimonials, and settings to defaults? This will overwrite website listings.', ui.ButtonSet.YES_NO);
   if (response == ui.Button.YES) {
     resetDemoData();
     ui.alert('Demo data has been successfully reset!');
   }
+}
+
+function triggerBackupMenu() {
+  var result = backupDatabase();
+  SpreadsheetApp.getUi().alert(result);
 }
 
 function openSpreadsheetMenu() {
@@ -86,121 +160,260 @@ function openSpreadsheetMenu() {
 // Auto Setup Database structure
 function setupDatabase(ss) {
   if (!ss) ss = SpreadsheetApp.getActiveSpreadsheet() || getDatabase();
-  
-  var sheetsConfig = {
-    "Packages": ["PackageID", "Category", "PackageName", "Destination", "Duration", "Price", "Currency", "Thumbnail", "ShortDescription", "LongDescription", "Featured", "Status"],
-    "Inquiries": ["InquiryID", "Date", "Name", "Phone", "Email", "Service", "Destination", "TravelDate", "Adults", "Children", "Message", "Status"],
-    "Testimonials": ["ReviewID", "CustomerName", "Country", "Rating", "Review", "ImageURL"],
-    "Blogs": ["BlogID", "Title", "Author", "Date", "Category", "Summary", "Content", "ImageURL", "ReadTime"],
-    "Settings": ["SettingKey", "SettingValue"],
-    "WhatsAppLogs": ["LogID", "Timestamp", "SenderPhone", "SenderName", "IncomingMessage", "DetectedIntent", "BotReply", "Status"]
-  };
+  var sheetsConfig = getSheetsConfig();
 
   for (var sheetName in sheetsConfig) {
     var sheet = ss.getSheetByName(sheetName);
     if (!sheet) {
-      sheet = ss.insertSheet(sheetName);
-    }
-    
-    // Check if headers exist, if not create them
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(sheetsConfig[sheetName]);
-      // Format headers
-      var range = sheet.getRange(1, 1, 1, sheetsConfig[sheetName].length);
-      range.setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
-      sheet.setFrozenRows(1);
+      try {
+        sheet = ss.insertSheet(sheetName);
+        console.log("Created missing sheet: " + sheetName);
+      } catch (err) {
+        console.error("Failed to create sheet " + sheetName + ": " + err.toString());
+      }
     }
   }
 }
 
-// Reset and seed data
+// Audit and upgrade columns without losing user data
+function upgradeDatabaseSchema(ss) {
+  ss = ss || getDatabase();
+  console.log("Starting database schema audit...");
+  var sheetsConfig = getSheetsConfig();
+  
+  for (var sheetName in sheetsConfig) {
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) continue;
+    
+    var requiredHeaders = sheetsConfig[sheetName];
+    if (sheet.getLastRow() === 0) {
+      // Empty sheet -> append all required headers
+      sheet.appendRow(requiredHeaders);
+      var range = sheet.getRange(1, 1, 1, requiredHeaders.length);
+      range.setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
+      sheet.setFrozenRows(1);
+      console.log("Formatted headers for empty sheet: " + sheetName);
+    } else {
+      // Existing sheet -> verify and append missing columns
+      var existingHeaders = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0];
+      var headersToAdd = [];
+      
+      for (var i = 0; i < requiredHeaders.length; i++) {
+        var req = requiredHeaders[i];
+        if (existingHeaders.indexOf(req) === -1) {
+          headersToAdd.push(req);
+        }
+      }
+      
+      if (headersToAdd.length > 0) {
+        console.log("Upgrading sheet " + sheetName + ". Adding headers: " + headersToAdd.join(", "));
+        var startCol = sheet.getLastColumn() + 1;
+        var newRange = sheet.getRange(1, startCol, 1, headersToAdd.length);
+        newRange.setValues([headersToAdd]);
+        newRange.setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
+      }
+    }
+  }
+  console.log("Database schema upgrade check completed.");
+}
+
+// Validate structure integrity and log reports
+function validateDatabaseSchema(ss) {
+  ss = ss || getDatabase();
+  console.log("Validating database schema...");
+  var sheetsConfig = getSheetsConfig();
+  var reports = [];
+  
+  for (var sheetName in sheetsConfig) {
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      reports.push("CRITICAL ERROR: Sheet " + sheetName + " is missing from the database.");
+      continue;
+    }
+    
+    var requiredHeaders = sheetsConfig[sheetName];
+    var existingHeaders = sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0];
+    var missing = [];
+    
+    for (var i = 0; i < requiredHeaders.length; i++) {
+      if (existingHeaders.indexOf(requiredHeaders[i]) === -1) {
+        missing.push(requiredHeaders[i]);
+      }
+    }
+    
+    if (missing.length > 0) {
+      reports.push("ERROR: Sheet '" + sheetName + "' missing columns: " + missing.join(", "));
+    } else {
+      reports.push("VERIFIED: Sheet '" + sheetName + "' structure correct.");
+    }
+  }
+  
+  console.log("Database Validation Audit Report:\n" + reports.join("\n"));
+  return reports;
+}
+
+// Generate next sequential ID for auditing (USR-2026-0001, USR-2026-0002)
+function generateSequentialId(prefix, sheetName, colIndex) {
+  var ss = getDatabase();
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return prefix + "-" + new Date().getFullYear() + "-0001";
+  
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    return prefix + "-" + new Date().getFullYear() + "-0001";
+  }
+  
+  // Read target ID column
+  var values = sheet.getRange(2, colIndex, lastRow - 1, 1).getValues();
+  var year = new Date().getFullYear();
+  var maxNum = 0;
+  
+  for (var i = 0; i < values.length; i++) {
+    var val = String(values[i][0]);
+    if (val.startsWith(prefix + "-" + year + "-")) {
+      var parts = val.split("-");
+      if (parts.length === 3) {
+        var num = parseInt(parts[2], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+  }
+  
+  var nextNum = maxNum + 1;
+  var paddedNum = ("0000" + nextNum).slice(-4);
+  return prefix + "-" + year + "-" + paddedNum;
+}
+
+// Daily / Manual Spreadsheet Backup utility
+function backupDatabase() {
+  var ss = getDatabase();
+  var settingsSheet = ss.getSheetByName("settings");
+  var backupEnabled = "TRUE";
+  
+  // Read value from key-value "settings" tab
+  if (settingsSheet && settingsSheet.getLastRow() > 1) {
+    var rows = settingsSheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] === "BACKUP_ENABLED") {
+        backupEnabled = rows[i][1];
+        break;
+      }
+    }
+  }
+  
+  if (String(backupEnabled).toUpperCase() !== 'TRUE') {
+    console.log("Backup skipped: BACKUP_ENABLED is set to FALSE.");
+    return "Backup Disabled";
+  }
+  
+  try {
+    var fileId = ss.getId();
+    var file = DriveApp.getFileById(fileId);
+    
+    // Find or create Backups folder
+    var folders = DriveApp.getFoldersByName("SeerooTravels Backups");
+    var folder = null;
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      folder = DriveApp.createFolder("SeerooTravels Backups");
+    }
+    
+    var today = new Date();
+    var dateString = today.getFullYear() + 
+                     ("0" + (today.getMonth() + 1)).slice(-2) + 
+                     ("0" + today.getDate()).slice(-2) + "_" + 
+                     ("0" + today.getHours()).slice(-2) + 
+                     ("0" + today.getMinutes()).slice(-2) + 
+                     ("0" + today.getSeconds()).slice(-2);
+    
+    var copyName = ss.getName() + "_backup_" + dateString;
+    file.makeCopy(copyName, folder);
+    console.log("Backup successfully generated: " + copyName);
+    return "Backup success: " + copyName;
+  } catch (err) {
+    console.error("backupDatabase failed: " + err.toString());
+    return "Backup failed: " + err.toString();
+  }
+}
+
+// Seed Settings & defaults data
+function seedDatabaseData(ss) {
+  // Seeding the parameters configuration settings
+  var settingsSheet = ss.getSheetByName("settings");
+  if (settingsSheet.getLastRow() <= 1) {
+    var defaultParams = [
+      ["REMINDER_DOC_HOURS", "24", "Time limit to send a reminder if user uploads no documents", new Date()],
+      ["REMINDER_PAYMENT_HOURS", "72", "Time limit to send a reminder if user does not pay invoice", new Date()],
+      ["INACTIVE_DAYS", "7", "Days of no interaction before user lead is marked inactive", new Date()],
+      ["MAX_OCR_RETRIES", "3", "Max times to try Llama OCR data extraction on failure", new Date()],
+      ["BACKUP_ENABLED", "TRUE", "Enable/disable automatic spreadsheet backups", new Date()]
+    ];
+    defaultParams.forEach(function(row) { settingsSheet.appendRow(row); });
+  }
+
+  // Seeding original Settings (For front-end HTML website compatibility)
+  var oldSettingsSheet = ss.getSheetByName("Settings");
+  if (oldSettingsSheet.getLastRow() <= 1) {
+    var defaultSettings = [
+      ["Company Name", "SeerooTravels"],
+      ["Tagline", "Explore Beyond Boundaries"],
+      ["WhatsApp", "+923001234567"],
+      ["Email", "info@seerootravels.com"],
+      ["Phone", "+92 300 1234567"],
+      ["Address", "Office #42, Blue Area, Islamabad, Pakistan"]
+    ];
+    defaultSettings.forEach(function(row) { oldSettingsSheet.appendRow(row); });
+  }
+
+  // Seed Testimonials if empty
+  var testimonialsSheet = ss.getSheetByName("Testimonials");
+  if (testimonialsSheet.getLastRow() <= 1) {
+    var defaultTestimonials = [
+      ["REV-001", "Ayesha Khan", "Pakistan", 5, "My Umrah trip organized by SeerooTravels was seamless. The hotels in Makkah and Madinah were exactly as described and close to Haram. Highly recommended!", "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&q=80"],
+      ["REV-002", "Sarah Jenkins", "United Kingdom", 5, "Amazing experience in Turkey! The tour guide was very knowledgeable, and all hotel accommodations and transport were premium and highly professional.", "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"],
+      ["REV-003", "Ahmed Al-Mansoor", "UAE", 5, "Azerbaijan tour packages were very affordable, and the service was absolutely high quality. The team assisted us throughout the visa process smoothly.", "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80"]
+    ];
+    defaultTestimonials.forEach(function(row) { testimonialsSheet.appendRow(row); });
+  }
+
+  // Seed Packages if empty
+  var packagesSheet = ss.getSheetByName("Packages");
+  if (packagesSheet.getLastRow() <= 1) {
+    var defaultPackages = [
+      ["PKG-001", "International", "Dubai Premium Getaway", "Dubai, UAE", "5 Days / 4 Nights", 450, "USD", "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?auto=format&fit=crop&w=800&q=80", "Experience the futuristic city of gold, skyscrapers, and premium desert safari experiences.", "Includes luxury 4-star hotel stay, airport transfers, city tour, safari, and visa support.", "TRUE", "Active"],
+      ["PKG-002", "International", "Historical Turkey Tour", "Turkey (Istanbul & Cappadocia)", "7 Days / 6 Nights", 850, "USD", "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=800&q=80", "Discover the fascinating intersection of Asia and Europe, Hagia Sophia, and hot air balloons.", "Includes internal flights, boutique hotels, guides, excursions, and hot air balloon assistance.", "TRUE", "Active"],
+      ["PKG-006", "Umrah", "Premium Umrah Package", "Saudi Arabia (Makkah & Madinah)", "14 Days", 1200, "USD", "https://images.unsplash.com/photo-1564507592333-c60657eea523?auto=format&fit=crop&w=800&q=80", "5-star hotel accommodations right next to the holy mosques for a spiritual journey.", "Includes flights, visa, transfers, Ziyarat, and hotels close to Haram.", "TRUE", "Active"]
+    ];
+    defaultPackages.forEach(function(row) { packagesSheet.appendRow(row); });
+  }
+
+  // Seed Blogs if empty
+  var blogsSheet = ss.getSheetByName("Blogs");
+  if (blogsSheet.getLastRow() <= 1) {
+    var defaultBlogs = [
+      ["BLOG-001", "Essential Umrah Guide for First-Time Travelers", "Islamic Studies Dept.", "2026-05-10", "Spiritual", "A comprehensive list of physical, mental, and logistical preparations required for a peaceful Umrah.", "Content details...", "https://images.unsplash.com/photo-1591604129939-f1efa4d9f7fa?auto=format&fit=crop&w=800&q=80", "6 min read"],
+      ["BLOG-002", "Top 10 Hidden Gems in Istanbul You Must Visit", "Zainab Raza", "2026-05-24", "Guides", "Beyond Hagia Sophia, explore Balat Jewish quarters and princes islands.", "Content details...", "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=800&q=80", "4 min read"]
+    ];
+    defaultBlogs.forEach(function(row) { blogsSheet.appendRow(row); });
+  }
+}
+
+// Reset and seed data manually
 function resetDemoData() {
   var ss = getDatabase();
+  var list = ["settings", "Settings", "Testimonials", "Packages", "Blogs", "Inquiries", "WhatsAppLogs", "users", "user_messages", "user_documents", "extracted_data", "processing_queue", "payments", "tickets", "human_review", "failed_documents", "audit_logs"];
   
-  // Seed Settings
-  var settingsSheet = ss.getSheetByName("Settings");
-  settingsSheet.clear();
-  settingsSheet.appendRow(["SettingKey", "SettingValue"]);
-  settingsSheet.getRange(1, 1, 1, 2).setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
+  list.forEach(function(sheetName) {
+    var sheet = ss.getSheetByName(sheetName);
+    if (sheet) sheet.clear();
+  });
   
-  var defaultSettings = [
-    ["Company Name", "SeerooTravels"],
-    ["Tagline", "Explore Beyond Boundaries"],
-    ["WhatsApp", "+923001234567"],
-    ["Email", "info@seerootravels.com"],
-    ["Phone", "+92 300 1234567"],
-    ["Address", "Office #42, Blue Area, Islamabad, Pakistan"]
-  ];
-  defaultSettings.forEach(function(row) { settingsSheet.appendRow(row); });
-
-  // Seed Testimonials
-  var testimonialsSheet = ss.getSheetByName("Testimonials");
-  testimonialsSheet.clear();
-  testimonialsSheet.appendRow(["ReviewID", "CustomerName", "Country", "Rating", "Review", "ImageURL"]);
-  testimonialsSheet.getRange(1, 1, 1, 6).setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
-  
-  var defaultTestimonials = [
-    ["REV-001", "Ayesha Khan", "Pakistan", 5, "My Umrah trip organized by SeerooTravels was seamless. The hotels in Makkah and Madinah were exactly as described and close to Haram. Highly recommended!", "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&q=80"],
-    ["REV-002", "Sarah Jenkins", "United Kingdom", 5, "Amazing experience in Turkey! The tour guide was very knowledgeable, and all hotel accommodations and transport were premium and highly professional.", "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"],
-    ["REV-003", "Ahmed Al-Mansoor", "UAE", 5, "Azerbaijan tour packages were very affordable, and the service was absolutely high quality. The team assisted us throughout the visa process smoothly.", "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80"],
-    ["REV-004", "Farhan Saeed", "Pakistan", 4, "Booked my flights and hotels for Thailand with them. Smooth operations, very responsive WhatsApp support team even late at night. Will book again.", "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80"],
-    ["REV-005", "Amara Ling", "Malaysia", 5, "We booked the Dubai Family tour. The kids loved the desert safari and tickets were pre-booked, so we bypassed all queues. Exceptionally structured!", "https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?auto=format&fit=crop&w=150&q=80"],
-    ["REV-006", "Dr. Bilal Qureshi", "Saudi Arabia", 5, "Professionalism, transparency, and top-tier customer care. Highly recommend their visa consultancy and corporate travel planning service.", "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80"]
-  ];
-  defaultTestimonials.forEach(function(row) { testimonialsSheet.appendRow(row); });
-
-  // Seed Packages
-  var packagesSheet = ss.getSheetByName("Packages");
-  packagesSheet.clear();
-  packagesSheet.appendRow(["PackageID", "Category", "PackageName", "Destination", "Duration", "Price", "Currency", "Thumbnail", "ShortDescription", "LongDescription", "Featured", "Status"]);
-  packagesSheet.getRange(1, 1, 1, 12).setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
-  
-  var defaultPackages = [
-    ["PKG-001", "International", "Dubai Premium Getaway", "Dubai, UAE", "5 Days / 4 Nights", 450, "USD", "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?auto=format&fit=crop&w=800&q=80", "Experience the futuristic city of gold, skyscrapers, and premium desert safari experiences.", "Includes luxury 4-star hotel stay, airport transfers, half-day city tour, desert safari with BBQ dinner, dhow cruise with dinner, Burj Khalifa entry tickets, and single entry visa assistance.", "TRUE", "Active"],
-    ["PKG-002", "International", "Historical Turkey Tour", "Turkey (Istanbul & Cappadocia)", "7 Days / 6 Nights", 850, "USD", "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=800&q=80", "Discover the fascinating intersection of Asia and Europe, Hagia Sophia, and hot air balloons.", "Includes internal flights, 4-star boutique hotel stays, daily breakfast, full-day Istanbul old city tour, Cappadocia hot air balloon flight assistance, professional English tour guides, and museum entry tickets.", "TRUE", "Active"],
-    ["PKG-003", "International", "Thailand Beach Paradise", "Phuket & Krabi, Thailand", "6 Days / 5 Nights", 350, "USD", "https://images.unsplash.com/photo-1528181304800-2f1908c39522?auto=format&fit=crop&w=800&q=80", "Relax on crystal clear white sand beaches and explore exotic tropical islands.", "Package includes 3 nights in Phuket and 2 nights in Krabi, daily breakfast, Phi Phi Island tour by speedboat, Krabi 4 islands tour, internal road/ferry transfers, and tour coordinator.", "TRUE", "Active"],
-    ["PKG-004", "International", "Malaysia Scenic Tour", "Kuala Lumpur & Langkawi", "6 Days / 5 Nights", 400, "USD", "https://images.unsplash.com/photo-1508009603885-50cf7c579365?auto=format&fit=crop&w=800&q=80", "Enjoy urban luxury at Petronas Twin Towers combined with natural island vibes.", "Includes 4-star hotel stays, daily breakfast, Kuala Lumpur half-day city tour, Langkawi island hopping tour, cable car tickets, and private airport transfers.", "FALSE", "Active"],
-    ["PKG-005", "International", "Baku Adventure", "Baku, Azerbaijan", "5 Days / 4 Nights", 320, "USD", "https://images.unsplash.com/photo-1588874676106-ad7ffbbdf893?auto=format&fit=crop&w=800&q=80", "Wander through the historic Old Walled City and modern Flame Towers.", "Includes 4-star hotel accommodation in Baku center, daily breakfast, airport transfers, Baku city tour, fire temple & burning mountain tour, Gabala tour, and visa support.", "TRUE", "Active"],
-    ["PKG-006", "Umrah", "Premium Umrah Package", "Saudi Arabia (Makkah & Madinah)", "14 Days", 1200, "USD", "https://images.unsplash.com/photo-1564507592333-c60657eea523?auto=format&fit=crop&w=800&q=80", "5-star hotel accommodations right next to the holy mosques for a spiritual journey.", "Our premium spiritual package features 7 nights in Makkah at Pullman ZamZam (or similar), 7 nights in Madinah at Pullman Zamzam Madinah (or similar), direct flights, Umrah visa processing, and private transport.", "TRUE", "Active"],
-    ["PKG-007", "Umrah", "Gold Umrah Package", "Saudi Arabia (Makkah & Madinah)", "10 Days", 850, "USD", "https://images.unsplash.com/photo-1591604129939-f1efa4d9f7fa?auto=format&fit=crop&w=800&q=80", "Excellent premium 4-star services offering perfect comfort and spiritual proximity.", "Includes 5 nights in Makkah (4-star hotel, 350m to Haram) and 5 nights in Madinah (4-star hotel, 200m to Masjid-an-Nabawi), Umrah visa, complete transport in luxury coaches, and Ziyarat tours.", "FALSE", "Active"],
-    ["PKG-008", "Umrah", "Economy Umrah Package", "Saudi Arabia (Makkah & Madinah)", "15 Days", 600, "USD", "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=800&q=80", "Most budget-friendly spiritual package with clean, comfortable accommodations.", "Features 7 nights in Makkah (700m from Haram with free shuttle) and 7 nights in Madinah (350m from Nabawi), Umrah visa, transport, and support staff.", "FALSE", "Active"],
-    ["PKG-009", "International", "Bali Island Retreat", "Bali, Indonesia", "6 Days / 5 Nights", 420, "USD", "https://images.unsplash.com/photo-1537996194471-e657df975ab4?auto=format&fit=crop&w=800&q=80", "Experience magical temples, lush rice fields, and breathtaking ocean sunsets.", "Includes private pool villa stays, daily breakfast, Kintamani Volcano tour, Ubud tour with swing, Uluwatu temple tour with Kecak dance, and private airport pickup.", "FALSE", "Active"],
-    ["PKG-010", "International", "Switzerland Winter Magic", "Switzerland (Zurich & Interlaken)", "7 Days / 6 Nights", 1600, "USD", "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=800&q=80", "Breathtaking Alps, scenic train journeys, and world-class luxury stays.", "Includes 3-star superior hotels, daily breakfast, 8-day 2nd class Swiss Travel Pass, Jungfraujoch excursion, Mount Titlis excursion, and city walks.", "FALSE", "Active"],
-    ["PKG-011", "International", "Maldives Overwater Luxury", "Maldives Atolls", "5 Days / 4 Nights", 1400, "USD", "https://images.unsplash.com/photo-1514282401047-d79a71a590e8?auto=format&fit=crop&w=800&q=80", "Stay in iconic overwater villas with endless views of deep blue Indian Ocean.", "Includes 4 nights in a premium Overwater Villa with private deck, full board meals (breakfast, lunch, dinner), shared speedboat transfers, and water sports equipment access.", "FALSE", "Active"],
-    ["PKG-012", "International", "Egypt Nile Cruise & Pyramids", "Egypt (Cairo & Aswan)", "8 Days / 7 Nights", 950, "USD", "https://images.unsplash.com/photo-1539650116574-8efeb43e2750?auto=format&fit=crop&w=800&q=80", "Journey down the legendary Nile and marvel at ancient Pyramids of Giza.", "Includes 3 nights in Cairo 5-star hotel, 4 nights on a 5-star Nile Cruise ship, all meals on cruise, domestic flights, Cairo Pyramids tour, and complete sightseeing.", "FALSE", "Active"]
-  ];
-  defaultPackages.forEach(function(row) { packagesSheet.appendRow(row); });
-
-  // Seed Blogs
-  var blogsSheet = ss.getSheetByName("Blogs");
-  blogsSheet.clear();
-  blogsSheet.appendRow(["BlogID", "Title", "Author", "Date", "Category", "Summary", "Content", "ImageURL", "ReadTime"]);
-  blogsSheet.getRange(1, 1, 1, 9).setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
-  
-  var defaultBlogs = [
-    ["BLOG-001", "Essential Umrah Guide for First-Time Travelers", "Islamic Studies Dept.", "2026-05-10", "Spiritual", "A comprehensive list of physical, mental, and logistical preparations required for a peaceful Umrah.", "Going on Umrah for the first time is a deeply emotional experience. Ensure you prepare by: 1. Packing light, breathable Ihram clothing. 2. Exercising and walking daily to prepare for Tawaaf and Sa'ee. 3. Downloading official Nusuk apps early to schedule permits. 4. Carrying essential hygiene items without scent. 5. Keeping copies of all hotel vouchers and visa pages physically printed.", "https://images.unsplash.com/photo-1591604129939-f1efa4d9f7fa?auto=format&fit=crop&w=800&q=80", "6 min read"],
-    ["BLOG-002", "Top 10 Hidden Gems in Istanbul You Must Visit", "Zainab Raza", "2026-05-24", "Guides", "Beyond Hagia Sophia and Grand Bazaar, explore these rich cultural secrets of Turkey's magical capital.", "Istanbul is bursting with ancient secrets. While everyone goes to the Blue Mosque, try visiting the Balat colorful Jewish quarter, climbing Camlica Hill for a panoramic view of the Bosphorus, taking a ferry to the Princes' Islands, exploring the Chora Byzantine mosaics, and sampling authentic street-side roasted chestnuts in Ortakoy.", "https://images.unsplash.com/photo-1524231757912-21f4fe3a7200?auto=format&fit=crop&w=800&q=80", "4 min read"],
-    ["BLOG-003", "A Guide to Budget Travel in Malaysia and Thailand", "Omar Farooq", "2026-06-02", "Budgeting", "Learn how to combine these two beautiful SE Asian countries into one budget-friendly flight journey.", "Traveling across Southeast Asia doesn't have to drain your wallet. You can take low-cost trains from Bangkok down to Kuala Lumpur, eat delicious local street food in Penang, stay in boutique hostels or homestays, utilize local ride-hailing apps like Grab, and pre-book tours online to get massive discounts.", "https://images.unsplash.com/photo-1508009603885-50cf7c579365?auto=format&fit=crop&w=800&q=80", "5 min read"],
-    ["BLOG-004", "Visa Requirements for Pakistani Citizens in 2026", "Compliance Team", "2026-06-08", "Visa Info", "An up-to-date look at Azerbaijan, Turkey, and Dubai visa policies for Pakistani passport holders.", "Azerbaijan offers a streamlined e-visa program completing in 3 business days. Dubai offers 30-day and 60-day tourist visas requiring basic passport scans and bank statements. Turkey still requires submission through physical agencies with detailed travel history, employment proofs, and active bank details. Contact SeerooTravels for full visa document vetting.", "https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80", "8 min read"],
-    ["BLOG-005", "Why Azerbaijan (Baku) is the New Favorite Tourist Destination", "Kamil Aliyev", "2026-06-12", "Destinations", "Discover how Baku matches European architecture with rich oil-history culture at half the price.", "Baku is rapidly growing as a favorite destination. The city has rich history alongside futuristic building design. You get delicious Caspian Sea seafood, historical fire temples in Ateshgah, mud volcanoes, and beautiful snowy resorts in Shahdag, all while having very cheap food, transport, and shopping options.", "https://images.unsplash.com/photo-1588874676106-ad7ffbbdf893?auto=format&fit=crop&w=800&q=80", "5 min read"],
-    ["BLOG-006", "Packing Checklist for Long International Flights", "Traveler Pro", "2026-06-13", "Tips", "Never forget these essential items in your carry-on bag for a stress-free travel day.", "Long-haul flights can be exhausting. Maximize your comfort by packing: 1. A memory foam neck pillow. 2. Noise-cancelling headphones. 3. Travel-sized moisturizers and lip balm. 4. A reusable water bottle to fill past security. 5. Crucial medications and a universal adapter plug.", "https://images.unsplash.com/photo-1527631746610-bca00a040d60?auto=format&fit=crop&w=800&q=80", "3 min read"]
-  ];
-  defaultBlogs.forEach(function(row) { blogsSheet.appendRow(row); });
-  
-  // Clear Inquiries
-  var inquiriesSheet = ss.getSheetByName("Inquiries");
-  inquiriesSheet.clear();
-  inquiriesSheet.appendRow(["InquiryID", "Date", "Name", "Phone", "Email", "Service", "Destination", "TravelDate", "Adults", "Children", "Message", "Status"]);
-  inquiriesSheet.getRange(1, 1, 1, 12).setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
-
-  // Clear WhatsAppLogs
-  var waLogsSheet = ss.getSheetByName("WhatsAppLogs");
-  if (waLogsSheet) {
-    waLogsSheet.clear();
-    waLogsSheet.appendRow(["LogID", "Timestamp", "SenderPhone", "SenderName", "IncomingMessage", "DetectedIntent", "BotReply", "Status"]);
-    waLogsSheet.getRange(1, 1, 1, 8).setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
-    waLogsSheet.setFrozenRows(1);
-  }
+  setupDatabase(ss);
+  upgradeDatabaseSchema(ss);
+  seedDatabaseData(ss);
 }
 
 // Convert sheet data to JSON array of objects
@@ -226,7 +439,7 @@ function sheetToJson(sheetName) {
   return jsonArray;
 }
 
-// Retrieve settings as a direct key-value map
+// Retrieve settings key-values
 function getSettingsMap() {
   var settings = sheetToJson("Settings");
   var map = {};
@@ -240,11 +453,10 @@ function getSettingsMap() {
 
 // API Router
 function doGet(e) {
-  // Prevent crash on local test runner calls
   e = e || { parameter: {} };
   var action = e.parameter.action;
 
-  // Serve Single-Page UI
+  // Serve Front-End Website
   if (!action) {
     var template = HtmlService.createTemplateFromFile('index');
     var settings = getSettingsMap();
@@ -257,7 +469,7 @@ function doGet(e) {
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
 
-  // Handle API Requests
+  // API Requests
   var result = {};
   try {
     switch (action) {
@@ -278,8 +490,13 @@ function doGet(e) {
       case 'getSettings':
         result = { success: true, data: getSettingsMap() };
         break;
+      case 'generateId':
+        var prefix = e.parameter.prefix;
+        var sheetName = e.parameter.sheetName;
+        var colIndex = parseInt(e.parameter.colIndex, 10) || 1;
+        result = { success: true, id: generateSequentialId(prefix, sheetName, colIndex) };
+        break;
       case 'submitInquiry':
-        // Fallback GET submission
         result = saveInquiry(e.parameter);
         break;
       default:
@@ -293,7 +510,7 @@ function doGet(e) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// Handle Form Submissions (Simple cross-origin requests)
+// POST submissions from frontend forms
 function doPost(e) {
   var result = {};
   try {
@@ -313,24 +530,22 @@ function doPost(e) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// Save inquiry to Sheets with Spam validations
+// Log inquiry to Google Sheets
 function saveInquiry(data) {
   if (!data.name || !data.phone || !data.email || !data.service) {
-    return { success: false, error: "Missing required fields (Name, Phone, Email, Service)." };
+    return { success: false, error: "Missing required fields." };
   }
 
-  // 1. Honeypot check: 'website' field must be empty
+  // Honeypot check
   if (data.website && data.website.trim() !== "") {
-    console.warn("Spam inquiry blocked: Honeypot field filled.");
-    return { success: true, mock: true, message: "Inquiry received. Thank you!" }; // Silent pass to mislead bots
+    return { success: true, mock: true, message: "Inquiry received. Thank you!" };
   }
 
-  // 2. Submission speed check: Must take at least 3 seconds to complete (if sent from frontend client)
+  // Speed check
   if (data.form_load_time) {
     var loadTime = parseInt(data.form_load_time, 10);
     var now = new Date().getTime();
     if (now - loadTime < 3000) {
-      console.warn("Spam inquiry blocked: Submission completed too fast.");
       return { success: true, mock: true, message: "Inquiry received. Thank you!" };
     }
   }
@@ -338,7 +553,6 @@ function saveInquiry(data) {
   var ss = getDatabase();
   var sheet = ss.getSheetByName("Inquiries");
   
-  // Clean / sanitize string inputs
   var name = sanitizeInput(data.name);
   var phone = sanitizeInput(data.phone);
   var email = sanitizeInput(data.email);
@@ -349,19 +563,13 @@ function saveInquiry(data) {
   var children = parseInt(data.children, 10) || 0;
   var message = sanitizeInput(data.message || "");
 
-  // Basic email validation
   var emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
-    return { success: false, error: "Invalid email address format." };
+    return { success: false, error: "Invalid email address." };
   }
 
-  // Generate unique Inquiry ID (SRT-YYYYMMDD-[4 Char Hash])
-  var today = new Date();
-  var dateStr = today.getFullYear() + 
-                ("0" + (today.getMonth() + 1)).slice(-2) + 
-                ("0" + today.getDate()).slice(-2);
-  var randPart = Math.random().toString(36).substring(2, 6).toUpperCase();
-  var inquiryId = "SRT-" + dateStr + "-" + randPart;
+  // Generate sequential Inquiry ID (INR-YYYY-XXXX)
+  var inquiryId = generateSequentialId("INR", "Inquiries", 1);
 
   var rowData = [
     inquiryId,
@@ -382,11 +590,10 @@ function saveInquiry(data) {
   return { 
     success: true, 
     inquiryId: inquiryId, 
-    message: "Thank you for contacting SeerooTravels! Your inquiry (" + inquiryId + ") has been logged. Our representative will contact you shortly." 
+    message: "Thank you for contacting SeerooTravels! Your inquiry (" + inquiryId + ") has been logged successfully." 
   };
 }
 
-// Strip HTML tags to sanitize inputs
 function sanitizeInput(str) {
   if (typeof str !== 'string') return String(str || '');
   return str.replace(/<\/?[^>]+(>|$)/g, "").trim();
