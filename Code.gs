@@ -92,7 +92,8 @@ function setupDatabase(ss) {
     "Inquiries": ["InquiryID", "Date", "Name", "Phone", "Email", "Service", "Destination", "TravelDate", "Adults", "Children", "Message", "Status"],
     "Testimonials": ["ReviewID", "CustomerName", "Country", "Rating", "Review", "ImageURL"],
     "Blogs": ["BlogID", "Title", "Author", "Date", "Category", "Summary", "Content", "ImageURL", "ReadTime"],
-    "Settings": ["SettingKey", "SettingValue"]
+    "Settings": ["SettingKey", "SettingValue"],
+    "WhatsAppLogs": ["LogID", "Timestamp", "SenderPhone", "SenderName", "IncomingMessage", "DetectedIntent", "BotReply", "Status"]
   };
 
   for (var sheetName in sheetsConfig) {
@@ -191,6 +192,15 @@ function resetDemoData() {
   inquiriesSheet.clear();
   inquiriesSheet.appendRow(["InquiryID", "Date", "Name", "Phone", "Email", "Service", "Destination", "TravelDate", "Adults", "Children", "Message", "Status"]);
   inquiriesSheet.getRange(1, 1, 1, 12).setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
+
+  // Clear WhatsAppLogs
+  var waLogsSheet = ss.getSheetByName("WhatsAppLogs");
+  if (waLogsSheet) {
+    waLogsSheet.clear();
+    waLogsSheet.appendRow(["LogID", "Timestamp", "SenderPhone", "SenderName", "IncomingMessage", "DetectedIntent", "BotReply", "Status"]);
+    waLogsSheet.getRange(1, 1, 1, 8).setFontWeight("bold").setBackground("#0A4D68").setFontColor("#FFFFFF");
+    waLogsSheet.setFrozenRows(1);
+  }
 }
 
 // Convert sheet data to JSON array of objects
