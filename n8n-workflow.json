@@ -1,0 +1,467 @@
+{
+  "name": "SeerooTravels WhatsApp Chatbot Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp/webhook",
+        "options": {}
+      },
+      "id": "webhook-trigger-node-id",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.entry[0].changes[0].value.messages[0].type }}",
+              "value2": "text"
+            }
+          ]
+        }
+      },
+      "id": "check-text-msg-id",
+      "name": "Is Text Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "phone",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].from }}"
+            },
+            {
+              "name": "message",
+              "value": "={{ $json.body.entry[0].changes[0].value.messages[0].text.body }}"
+            },
+            {
+              "name": "senderName",
+              "value": "={{ $json.body.entry[0].changes[0].value.contacts[0].profile.name }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "parse-message-fields-id",
+      "name": "Parse Details",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        680,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value1": "={{ $json.message }}",
+              "operation": "regex",
+              "value2": "umrah"
+            },
+            {
+              "value1": "={{ $json.message }}",
+              "operation": "regex",
+              "value2": "visa"
+            },
+            {
+              "value1": "={{ $json.message }}",
+              "operation": "regex",
+              "value2": "package|tour|dubai|turkey|thailand|malaysia|azerbaijan"
+            },
+            {
+              "value1": "={{ $json.message }}",
+              "operation": "regex",
+              "value2": "book|inquiry|register"
+            }
+          ]
+        },
+        "fallbackOutput": 4
+      },
+      "id": "intent-switch-router-id",
+      "name": "Route by Keywords",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        880,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "sheetId": "YOUR_SPREADSHEET_ID_HERE",
+        "range": "Packages!A:L",
+        "options": {}
+      },
+      "id": "gsheet-get-packages-id",
+      "name": "Get Packages Data",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        150
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "your-google-oauth-credentials-id"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const packages = items.map(item => item.json);\nconst umrahPkgs = packages.filter(p => p.Category === 'Umrah' && p.Status === 'Active');\n\nlet reply = \"🕋 *SeerooTravels Special Umrah Packages* 🕋\\n\\nHere are our available packages:\\n\\n\";\numrahPkgs.forEach((p, idx) => {\n  reply += `*${idx+1}. ${p.PackageName}*\\n⏱️ Duration: ${p.Duration}\\n💵 Price: ${p.Currency} ${p.Price}\\n📝 Details: ${p.ShortDescription}\\n\\n`;\n});\nreply += \"To book, simply reply with: *Book [Package Name]* and our representative will register your interest.\";\n\nreturn [{ json: { text: reply } }];"
+      },
+      "id": "format-umrah-response-id",
+      "name": "Format Umrah Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const packages = items.map(item => item.json);\nconst tours = packages.filter(p => p.Category === 'International' && p.Status === 'Active');\n\nlet reply = \"✈️ *SeerooTravels International Tours* ✈️\\n\\nHere are our active packages:\\n\\n\";\ntours.forEach((p, idx) => {\n  reply += `*${idx+1}. ${p.PackageName}* (${p.Destination})\\n⏱️ Duration: ${p.Duration}\\n💵 Price: ${p.Currency} ${p.Price}\\n📝 ${p.ShortDescription}\\n\\n`;\n});\nreply += \"To inquire further, reply with: *Book [Destination Name]* and we will get back to you.\";\n\nreturn [{ json: { text: reply } }];"
+      },
+      "id": "format-tours-response-id",
+      "name": "Format Tours Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "text",
+              "value": "📄 *SeerooTravels Visa Assistance Services* 📄\n\nWe provide professional visa assistance and document vetting for:\n- Dubai (Tourist e-visa in 3 working days)\n- Turkey (Full tourist file preparation)\n- Azerbaijan (E-visa processed quickly)\n- Thailand & Malaysia visas\n\nReply with: *Book Visa* along with your destination (e.g. 'Book Visa Dubai') to lodge an inquiry."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "visa-response-details-id",
+      "name": "Visa Response Setup",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "sheetId": "YOUR_SPREADSHEET_ID_HERE",
+        "range": "Inquiries!A:L",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "InquiryID": "=SRT-WA-{{ Math.floor(1000 + Math.random() * 9000) }}",
+            "Date": "={{ new Date().toISOString() }}",
+            "Name": "={{ $('Parse Details').item.json.senderName }}",
+            "Phone": "={{ $('Parse Details').item.json.phone }}",
+            "Email": "whatsapp@inquiry.com",
+            "Service": "WhatsApp Chatbot Inquiry",
+            "Destination": "From WhatsApp Chat",
+            "Message": "={{ $('Parse Details').item.json.message }}",
+            "Status": "New"
+          }
+        },
+        "options": {}
+      },
+      "id": "gsheet-create-inquiry-id",
+      "name": "Log WhatsApp Inquiry",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "your-google-oauth-credentials-id"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "text",
+              "value": "✅ *Inquiry Logged successfully!* \n\nThank you, {{ $('Parse Details').item.json.senderName }}. We have registered your inquiry in our system. Our travel support representative will contact you on this WhatsApp number shortly."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "inquiry-logged-response-id",
+      "name": "Confirm Inquiry Setup",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "text",
+              "value": "👋 *Hi! Welcome to SeerooTravels Support Desk* ✈️\nExplore Beyond Boundaries!\n\nHow can we help you today? Please reply with one of the keywords below:\n\n👉 *Packages* (To see active international holiday packages)\n👉 *Umrah* (To see our premium spiritual packages)\n👉 *Visa* (To see details about visa documentation help)\n👉 *Book [Details]* (To directly submit booking inquiries, e.g. 'Book Dubai package')\n\nYou can also contact our agent directly at *+92 300 1234567*."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "default-menu-response-id",
+      "name": "Default Menu Setup",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v17.0/YOUR_PHONE_NUMBER_ID/messages",
+        "authentication": "predefined",
+        "nodeCredentialType": "oAuth2Api",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_WHATSAPP_SYSTEM_ACCESS_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "messaging_product",
+              "value": "whatsapp"
+            },
+            {
+              "name": "recipient_type",
+              "value": "individual"
+            },
+            {
+              "name": "to",
+              "value": "={{ $('Parse Details').item.json.phone }}"
+            },
+            {
+              "name": "type",
+              "value": "text"
+            },
+            {
+              "name": "text.body",
+              "value": "={{ $json.text }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "whatsapp-api-send-id",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1600,
+        340
+      ]
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Text Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Text Message?": {
+      "main": [
+        [
+          {
+            "node": "Parse Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Details": {
+      "main": [
+        [
+          {
+            "node": "Route by Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Keywords": {
+      "main": [
+        [
+          {
+            "node": "Get Packages Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Visa Response Setup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Packages Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log WhatsApp Inquiry",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Default Menu Setup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Packages Data": {
+      "main": [
+        [
+          {
+            "node": "Format Umrah Info",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Format Tours Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Umrah Info": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Tours Info": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Visa Response Setup": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log WhatsApp Inquiry": {
+      "main": [
+        [
+          {
+            "node": "Confirm Inquiry Setup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Inquiry Setup": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Menu Setup": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": true
+}
